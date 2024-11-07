@@ -40,3 +40,12 @@
 .read-the-docs {
   color: #888;
 }
+
+#map {
+  height: 80vh;
+  width: 80vw;
+  margin: 0 auto;
+}
+.leaflet-container {
+  touch-action: none;
+}
