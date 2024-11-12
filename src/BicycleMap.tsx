@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import * as GeoTIFF from 'geotiff';
+import { ReadRasterResult } from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
@@ -60,7 +61,7 @@ const BicycleMap: React.FC = () => {
         const newLayers = [];
 
         for (const element of data.elements) {
-            const latlngs = element.geometry.map((point: any) => [point.lat, point.lon]);
+            const latlngs = element.geometry.map((point: { lat: number; lon: number }) => [point.lat, point.lon]);
 
             // Fetch and process elevation for the path
             const slopes = await calculatePathSlopes(latlngs);
@@ -106,6 +107,8 @@ const BicycleMap: React.FC = () => {
         return [x, y];
     };
 
+    type TypedArray = Uint8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array;
+
     const getElevation = async (lat: number, lon: number): Promise<number | null> => {
         const zoom = 12; // Adjust as needed
         const x = lon2tile(lon, zoom);
@@ -115,7 +118,7 @@ const BicycleMap: React.FC = () => {
         if (!tiff) return null;
 
         const image = await tiff.getImage();
-        const rasters = await image.readRasters();
+        const rasters = (await image.readRasters()) as TypedArray[];
         const bbox = image.getBoundingBox(); // EPSG:3857 Web Mercator
         const width = image.getWidth();
         const height = image.getHeight();
@@ -143,12 +146,16 @@ const BicycleMap: React.FC = () => {
         }
     };
 
+    
+    
+
     const smoothElevation = (elevations: (number | null)[]): (number | null)[] => {
         const smoothed = [];
         for (let i = 0; i < elevations.length; i++) {
-            const prev = elevations[i - 1] ?? elevations[i];
-            const next = elevations[i + 1] ?? elevations[i];
-            smoothed.push((prev + elevations[i] + next) / 3);
+            const prev = elevations[i - 1] ?? elevations[i] ?? 0;
+            const current = elevations[i] ?? 0;
+            const next = elevations[i + 1] ?? elevations[i] ?? 0;
+            smoothed.push((prev + current + next) / 3);
         }
         return smoothed;
     };
@@ -159,25 +166,21 @@ const BicycleMap: React.FC = () => {
 
         const slopes = [];
         for (let i = 0; i < smoothedElevations.length - 1; i++) {
-            const elevation1 = smoothedElevations[i];
-            const elevation2 = smoothedElevations[i + 1];
+            const elevation1 = smoothedElevations[i] ?? 0;
+            const elevation2 = smoothedElevations[i + 1] ?? 0;
 
-            if (elevation1 !== null && elevation2 !== null) {
-                const horizontalDistance = L.latLng(latlngs[i][0], latlngs[i][1]).distanceTo(
-                    L.latLng(latlngs[i + 1][0], latlngs[i + 1][1])
-                );
+            const horizontalDistance = L.latLng(latlngs[i][0], latlngs[i][1]).distanceTo(
+                L.latLng(latlngs[i + 1][0], latlngs[i + 1][1])
+            );
 
-                const slope = ((elevation2 - elevation1) / horizontalDistance) * 100;
-                slopes.push(slope);
-            } else {
-                slopes.push(0);
-            }
+            const slope = ((elevation2 - elevation1) / horizontalDistance) * 100;
+            slopes.push(slope);
         }
         return slopes;
     };
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp slope to [0, 15]
+        const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp slope to [0, 5]
         const red = Math.min(255, Math.floor((clampedSlope / 5) * 255));
         const green = Math.min(255, Math.floor((1 - clampedSlope / 5) * 255));
         return `rgb(${red}, ${green}, 0)`; // Green to Red gradient
