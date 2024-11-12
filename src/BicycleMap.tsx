@@ -67,6 +67,10 @@ const BicycleMap: React.FC = () => {
             for (let i = 0; i < latlngs.length - 1; i++) {
                 const color = getSlopeColor(slopes[i]);
                 const segment = L.polyline([latlngs[i], latlngs[i + 1]], { color, weight: 3 }).addTo(map);
+
+                // Add tooltip for slope info
+                segment.bindTooltip(`Slope: ${slopes[i].toFixed(2)}%`, { sticky: true });
+
                 newLayers.push(segment);
             }
         }
@@ -139,41 +143,44 @@ const BicycleMap: React.FC = () => {
         }
     };
 
+    const smoothElevation = (elevations: (number | null)[]): (number | null)[] => {
+        const smoothed = [];
+        for (let i = 0; i < elevations.length; i++) {
+            const prev = elevations[i - 1] ?? elevations[i];
+            const next = elevations[i + 1] ?? elevations[i];
+            smoothed.push((prev + elevations[i] + next) / 3);
+        }
+        return smoothed;
+    };
+
     const calculatePathSlopes = async (latlngs: [number, number][]): Promise<number[]> => {
         const elevations = await Promise.all(latlngs.map(([lat, lon]) => getElevation(lat, lon)));
+        const smoothedElevations = smoothElevation(elevations);
 
         const slopes = [];
-        for (let i = 0; i < elevations.length - 1; i++) {
-            const elevation1 = elevations[i];
-            const elevation2 = elevations[i + 1];
+        for (let i = 0; i < smoothedElevations.length - 1; i++) {
+            const elevation1 = smoothedElevations[i];
+            const elevation2 = smoothedElevations[i + 1];
 
             if (elevation1 !== null && elevation2 !== null) {
                 const horizontalDistance = L.latLng(latlngs[i][0], latlngs[i][1]).distanceTo(
                     L.latLng(latlngs[i + 1][0], latlngs[i + 1][1])
                 );
+
                 const slope = ((elevation2 - elevation1) / horizontalDistance) * 100;
                 slopes.push(slope);
-
-                // Debugging: Print details to console
-                console.log(
-                    `Segment ${i + 1}:`,
-                    `Start: (${latlngs[i][0]}, ${latlngs[i][1]}) Elevation: ${elevation1}m`,
-                    `End: (${latlngs[i + 1][0]}, ${latlngs[i + 1][1]}) Elevation: ${elevation2}m`,
-                    `Distance: ${horizontalDistance.toFixed(2)}m`,
-                    `Slope: ${slope.toFixed(2)}%`
-                );
             } else {
                 slopes.push(0);
-                console.log(`Segment ${i + 1}: Elevation data missing for one or both points.`);
             }
         }
         return slopes;
     };
 
     const getSlopeColor = (slope: number): string => {
-        if (slope < 5) return 'green';
-        if (slope < 10) return 'yellow';
-        return 'red';
+        const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp slope to [0, 15]
+        const red = Math.min(255, Math.floor((clampedSlope / 5) * 255));
+        const green = Math.min(255, Math.floor((1 - clampedSlope / 5) * 255));
+        return `rgb(${red}, ${green}, 0)`; // Green to Red gradient
     };
 
     const lon2tile = (lon: number, zoom: number) => Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
