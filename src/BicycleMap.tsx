@@ -41,14 +41,15 @@ const BicycleMap: React.FC = () => {
 
     const fetchBicyclePaths = async () => {
         if (!map) return;
-
+    
         const bounds = map.getBounds();
         const southWest = bounds.getSouthWest();
         const northEast = bounds.getNorthEast();
-
+    
+        // Remove previously drawn layers
         pathLayers.forEach(layer => map.removeLayer(layer));
         setPathLayers([]);
-
+    
         const query = `
             [out:json];
             way["highway"="cycleway"](${southWest.lat},${southWest.lng},${northEast.lat},${northEast.lng});
@@ -56,27 +57,44 @@ const BicycleMap: React.FC = () => {
         `;
         const response = await fetch(`https://overpass-api.de/api/interpreter?data=${query}`);
         const data = await response.json();
-
+    
         const newLayers = [];
-
+    
+        // Step 1: Draw all bike paths as thin black lines immediately
         for (const element of data.elements) {
             const latlngs = element.geometry.map((point: { lat: number; lon: number }) => [point.lat, point.lon]);
-
-            // Fetch and process elevation for the path
+    
+            const blackLine = L.polyline(latlngs, { color: 'black', weight: 1 }).addTo(map);
+            newLayers.push(blackLine);
+        }
+    
+        // Step 2: Process each path and overlay longer segments with slope-colored lines
+        for (const element of data.elements) {
+            const latlngs = element.geometry.map((point: { lat: number; lon: number }) => [point.lat, point.lon]);
+    
             const slopes = await calculatePathSlopes(latlngs);
             for (let i = 0; i < latlngs.length - 1; i++) {
-                const color = getSlopeColor(slopes[i]);
-                const segment = L.polyline([latlngs[i], latlngs[i + 1]], { color, weight: 3 }).addTo(map);
-
-                // Add tooltip for slope info
-                segment.bindTooltip(`Slope: ${slopes[i].toFixed(2)}%`, { sticky: true });
-
-                newLayers.push(segment);
+                const start = latlngs[i];
+                const end = latlngs[i + 1];
+    
+                const horizontalDistance = L.latLng(start[0], start[1]).distanceTo(L.latLng(end[0], end[1]));
+    
+                if (horizontalDistance >= 5) {
+                    const color = getSlopeColor(slopes[i]);
+                    const segment = L.polyline([start, end], { color, weight: 3 }).addTo(map);
+    
+                    // Add tooltip for slope info
+                    segment.bindTooltip(`Slope: ${slopes[i].toFixed(2)}%`, { sticky: true });
+    
+                    newLayers.push(segment);
+                }
             }
         }
-
+    
         setPathLayers(newLayers);
     };
+    
+    
 
     const fetchGeoTIFF = async (z: number, x: number, y: number): Promise<GeoTIFF.GeoTIFF | null> => {
         const tileKey = `${z}/${x}/${y}`;
