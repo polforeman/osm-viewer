@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import * as GeoTIFF from 'geotiff';
 
-const Map: React.FC = () => {
+const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
     const [pathLayers, setPathLayers] = useState<L.Polyline[]>([]);
     const [autoLoad, setAutoLoad] = useState(false);
@@ -95,6 +95,13 @@ const Map: React.FC = () => {
         return null;
     };
 
+    const latLonToMercator = (lat: number, lon: number): [number, number] => {
+        const radius = 6378137; // Earth radius in meters (WGS84)
+        const x = radius * (lon * Math.PI / 180);
+        const y = radius * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+        return [x, y];
+    };
+
     const getElevation = async (lat: number, lon: number): Promise<number | null> => {
         const zoom = 12; // Adjust as needed
         const x = lon2tile(lon, zoom);
@@ -105,15 +112,20 @@ const Map: React.FC = () => {
 
         const image = await tiff.getImage();
         const rasters = await image.readRasters();
-        const bbox = image.getBoundingBox();
+        const bbox = image.getBoundingBox(); // EPSG:3857 Web Mercator
         const width = image.getWidth();
         const height = image.getHeight();
 
         console.log("GeoTIFF bounding box:", bbox);
-        console.log("GeoTIFF size:", width, height);
 
-        const pixelX = Math.floor(((lon - bbox[0]) / (bbox[2] - bbox[0])) * width);
-        const pixelY = Math.floor(((bbox[3] - lat) / (bbox[3] - bbox[1])) * height);
+        // Convert lat/lon to Web Mercator
+        const [mercatorX, mercatorY] = latLonToMercator(lat, lon);
+        console.log("Lat/Lon:", lat, lon);
+        console.log("Mercator X/Y:", mercatorX, mercatorY);
+
+        // Map Web Mercator coordinates to pixel coordinates
+        const pixelX = Math.floor(((mercatorX - bbox[0]) / (bbox[2] - bbox[0])) * width);
+        const pixelY = Math.floor(((bbox[3] - mercatorY) / (bbox[3] - bbox[1])) * height);
 
         console.log(`Pixel coordinates: (${pixelX}, ${pixelY})`);
 
@@ -185,4 +197,4 @@ const Map: React.FC = () => {
     );
 };
 
-export default Map;
+export default BicycleMap;

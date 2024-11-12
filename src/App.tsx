@@ -1,11 +1,11 @@
 import React from 'react';
-import Map from './Map';
+import BicycleMap from './BicycleMap';
 
 const App: React.FC = () => {
     return (
         <div className="App">
             <h1>OSM Viewer</h1>
-            <Map />
+            <BicycleMap />
         </div>
     );
 };
