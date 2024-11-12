@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import * as GeoTIFF from 'geotiff';
-import { ReadRasterResult } from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
