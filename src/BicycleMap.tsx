@@ -112,23 +112,22 @@ const BicycleMap: React.FC = () => {
         return { slopes, elevations: elevations.map((e) => e ?? 0) };
     };
 
-    const displayPathsWithSlopes = async (map: L.Map, path: [number, number][], interval: number) => {
+    const displayPathsWithSlopes = async (map: L.Map, path: Array<[number, number]>, interval: number) => {
         const samplingPoints = generateSamplingPoints(path, interval);
-
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
-
+    
         for (let i = 0; i < samplingPoints.length - 1; i++) {
             const segment = [samplingPoints[i], samplingPoints[i + 1]];
             const slope = Math.abs(slopes[i]); // Take absolute value for coloring
             const startElevation = elevations[i];
             const endElevation = elevations[i + 1];
-
+    
             // Flip to [lat, lon] for Leaflet
             const flippedSegment: [number, number][] = segment.map(([lon, lat]) => [lat, lon] as [number, number]);
-
+    
             const color = getSlopeColor(slope);
             const polyline = L.polyline(flippedSegment, { color, weight: 3 }).addTo(map);
-
+    
             // Add tooltip with slope and elevation details
             polyline.bindTooltip(
                 `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
@@ -136,6 +135,7 @@ const BicycleMap: React.FC = () => {
             );
         }
     };
+    
 
     const getSlopeColor = (slope: number): string => {
         const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp between 0% and 5%
@@ -146,34 +146,35 @@ const BicycleMap: React.FC = () => {
 
     const fetchBicyclePaths = async () => {
         if (!map) return;
-
+    
         const bounds = map.getBounds();
         const southWest = bounds.getSouthWest();
         const northEast = bounds.getNorthEast();
-
+    
         const query = `
             [out:json];
             way["highway"="cycleway"](${southWest.lat},${southWest.lng},${northEast.lat},${northEast.lng});
             out geom;
         `;
         const response = await fetch(`https://overpass-api.de/api/interpreter?data=${query}`);
-        const data = await response.json();
-
-        const segments = data.elements.map((element: any) =>
-            element.geometry.map((point: { lat: number; lon: number }) => [point.lon, point.lat]) // Convert to [lon, lat] for Turf.js
+        const data: { elements: { geometry: { lat: number; lon: number }[] }[] } = await response.json();
+    
+        const segments: Array<Array<[number, number]>> = data.elements.map((element) =>
+            element.geometry.map((point) => [point.lon, point.lat])
         );
-
-        // Step 1: Display all paths as thin dark grey lines
+    
+        // Step 1: Display all paths as thin grey lines
         segments.forEach((path) => {
-            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]);
+            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
             L.polyline(flippedPath, { color: 'darkgrey', weight: 1 }).addTo(map);
         });
-
+    
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
             await displayPathsWithSlopes(map, path, 100); // 100m sampling interval
         });
     };
+    
 
     useEffect(() => {
         const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
