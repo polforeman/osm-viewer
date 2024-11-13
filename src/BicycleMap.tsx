@@ -166,12 +166,12 @@ const BicycleMap: React.FC = () => {
         // Step 1: Display all paths as thin grey lines
         segments.forEach((path) => {
             const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
-            L.polyline(flippedPath, { color: 'darkgrey', weight: 1 }).addTo(map);
+            L.polyline(flippedPath, { color: 'black', weight: 1 }).addTo(map);
         });
     
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, 100); // 100m sampling interval
+            await displayPathsWithSlopes(map, path, 200); // 100m sampling interval
         });
     };
     
@@ -179,10 +179,10 @@ const BicycleMap: React.FC = () => {
     useEffect(() => {
         const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
 
-        L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png', {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            opacity: 0.8,
-            attribution: '© OpenStreetMap contributors, Tiles: © Stadia Maps',
+            opacity: 0.2, // Make it faded
+            attribution: '© OpenStreetMap contributors',
         }).addTo(initializedMap);
 
         setMap(initializedMap);
