@@ -117,16 +117,17 @@ const BicycleMap: React.FC = () => {
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
     
         for (let i = 0; i < samplingPoints.length - 1; i++) {
-            const segment = [samplingPoints[i], samplingPoints[i + 1]];
+            const startPoint = turf.point(samplingPoints[i]);
+            const endPoint = turf.point(samplingPoints[i + 1]);
+            const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
+    
+            const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
             const slope = Math.abs(slopes[i]); // Take absolute value for coloring
             const startElevation = elevations[i];
             const endElevation = elevations[i + 1];
     
-            // Flip to [lat, lon] for Leaflet
-            const flippedSegment: [number, number][] = segment.map(([lon, lat]) => [lat, lon] as [number, number]);
-    
             const color = getSlopeColor(slope);
-            const polyline = L.polyline(flippedSegment, { color, weight: 3 }).addTo(map);
+            const polyline = L.polyline(slicedCoords, { color, weight: 3 }).addTo(map);
     
             // Add tooltip with slope and elevation details
             polyline.bindTooltip(
@@ -135,13 +136,12 @@ const BicycleMap: React.FC = () => {
             );
         }
     };
-    
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp between 0% and 5%
-        const red = Math.floor((clampedSlope / 5) * 255); // Slope of 5% is full red
-        const green = Math.floor((1 - clampedSlope / 5) * 255); // Slope of 0% is full green
-        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (5%)
+        const clampedSlope = Math.min(Math.max(slope, 0), 10); // Clamp between 0% and 10%
+        const red = Math.floor((clampedSlope / 10) * 255); // Slope of 10% is full red
+        const green = Math.floor((1 - clampedSlope / 10) * 255); // Slope of 0% is full green
+        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (10%)
     };
 
     const fetchBicyclePaths = async () => {
@@ -166,22 +166,21 @@ const BicycleMap: React.FC = () => {
         // Step 1: Display all paths as thin grey lines
         segments.forEach((path) => {
             const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
-            L.polyline(flippedPath, { color: 'black', weight: 1 }).addTo(map);
+            L.polyline(flippedPath, { color: 'darkgrey', weight: 1 }).addTo(map);
         });
     
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, 150); // 100m sampling interval
+            await displayPathsWithSlopes(map, path, 150); // Sampling interval
         });
     };
-    
 
     useEffect(() => {
         const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            opacity: 0.2, // Make it faded
+            opacity: 0.3,
             attribution: '© OpenStreetMap contributors',
         }).addTo(initializedMap);
 
