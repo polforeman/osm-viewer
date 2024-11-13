@@ -72,12 +72,20 @@ const BicycleMap: React.FC = () => {
 
     const generateSamplingPoints = (path: [number, number][], interval: number): [number, number][] => {
         const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
+        const numPoints = Math.ceil(totalLength / interval); // Determine the number of points
+        const actualInterval = totalLength / numPoints; // Recalculate interval to ensure start/end inclusion
         const points: [number, number][] = [];
 
-        for (let dist = 0; dist <= totalLength; dist += interval) {
+        for (let dist = 0; dist <= totalLength; dist += actualInterval) {
             const point = turf.along(turf.lineString(path), dist, { units: 'meters' });
             const [lon, lat] = point.geometry.coordinates;
             points.push([lon, lat]); // Keep lon/lat for Turf.js
+        }
+
+        // Ensure the end point is included
+        const end = path[path.length - 1];
+        if (points[points.length - 1][0] !== end[0] || points[points.length - 1][1] !== end[1]) {
+            points.push(end);
         }
 
         return points;
@@ -138,10 +146,10 @@ const BicycleMap: React.FC = () => {
     };
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), 10); // Clamp between 0% and 10%
-        const red = Math.floor((clampedSlope / 10) * 255); // Slope of 10% is full red
+        const clampedSlope = Math.min(Math.max(slope, 0), 10); // Clamp between 0% and 5%
+        const red = Math.floor((clampedSlope / 10) * 255); // Slope of 5% is full red
         const green = Math.floor((1 - clampedSlope / 10) * 255); // Slope of 0% is full green
-        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (10%)
+        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (5%)
     };
 
     const fetchBicyclePaths = async () => {
@@ -171,9 +179,10 @@ const BicycleMap: React.FC = () => {
     
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, 150); // Sampling interval
+            await displayPathsWithSlopes(map, path, 150); // 150m sampling interval
         });
     };
+    
 
     useEffect(() => {
         const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
