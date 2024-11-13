@@ -7,6 +7,8 @@ import * as GeoTIFF from 'geotiff';
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
 
+    const MIN_PATH_LENGTH = 10; // Minimum path length in meters to display
+
     // Cache for GeoTIFF tiles
     const tileCache = new Map<string, GeoTIFF.GeoTIFF>();
 
@@ -121,6 +123,9 @@ const BicycleMap: React.FC = () => {
     };
 
     const displayPathsWithSlopes = async (map: L.Map, path: Array<[number, number]>, interval: number) => {
+        const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
+        if (totalLength < MIN_PATH_LENGTH) return; // Skip short paths
+
         const samplingPoints = generateSamplingPoints(path, interval);
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
     
