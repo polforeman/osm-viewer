@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import * as turf from '@turf/turf';
 import * as GeoTIFF from 'geotiff';
 
@@ -16,15 +17,22 @@ const BicycleMap: React.FC = () => {
         }
 
         const url = `https://s3.amazonaws.com/elevation-tiles-prod/geotiff/${z}/${x}/${y}.tif`;
-        const response = await fetch(url);
-        if (response.ok) {
-            const arrayBuffer = await response.arrayBuffer();
-            const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
-            tileCache.set(tileKey, tiff);
-            return tiff;
+
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                const arrayBuffer = await response.arrayBuffer();
+                const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+                tileCache.set(tileKey, tiff);
+                return tiff;
+            } else {
+                console.error(`GeoTIFF fetch failed for ${url}: ${response.statusText}`);
+                return null;
+            }
+        } catch (error) {
+            console.error(`GeoTIFF fetch error for URL: ${url}`, error);
+            return null;
         }
-        console.error("Failed to fetch GeoTIFF:", tileKey);
-        return null;
     };
 
     const latLonToMercator = (lat: number, lon: number): [number, number] => {
@@ -57,6 +65,7 @@ const BicycleMap: React.FC = () => {
             const elevation = rasters[0][pixelY * width + pixelX];
             return elevation;
         } else {
+            console.error("Coordinates out of bounds for GeoTIFF");
             return null;
         }
     };
@@ -74,7 +83,7 @@ const BicycleMap: React.FC = () => {
         return points;
     };
 
-    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<number[]> => {
+    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<{ slopes: number[]; elevations: number[] }> => {
         const elevations = await Promise.all(samplingPoints.map(([lon, lat]) => getElevation(lon, lat)));
         const slopes: number[] = [];
 
@@ -100,17 +109,19 @@ const BicycleMap: React.FC = () => {
             }
         }
 
-        return slopes;
+        return { slopes, elevations: elevations.map((e) => e ?? 0) };
     };
 
     const displayPathsWithSlopes = async (map: L.Map, path: [number, number][], interval: number) => {
         const samplingPoints = generateSamplingPoints(path, interval);
 
-        const slopes = await calculateSlopes(samplingPoints);
+        const { slopes, elevations } = await calculateSlopes(samplingPoints);
 
         for (let i = 0; i < samplingPoints.length - 1; i++) {
             const segment = [samplingPoints[i], samplingPoints[i + 1]];
-            const slope = slopes[i];
+            const slope = Math.abs(slopes[i]); // Take absolute value for coloring
+            const startElevation = elevations[i];
+            const endElevation = elevations[i + 1];
 
             // Flip to [lat, lon] for Leaflet
             const flippedSegment: [number, number][] = segment.map(([lon, lat]) => [lat, lon] as [number, number]);
@@ -118,17 +129,19 @@ const BicycleMap: React.FC = () => {
             const color = getSlopeColor(slope);
             const polyline = L.polyline(flippedSegment, { color, weight: 3 }).addTo(map);
 
-            // Add tooltip with slope
-            polyline.bindTooltip(`Slope: ${slope.toFixed(2)}%`, { sticky: true });
+            // Add tooltip with slope and elevation details
+            polyline.bindTooltip(
+                `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
+                { sticky: true }
+            );
         }
     };
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, -10), 10); // Clamp between -10% and 10%
-        const red = clampedSlope > 0 ? Math.floor((clampedSlope / 10) * 255) : 0;
-        const green = clampedSlope < 0 ? Math.floor((-clampedSlope / 10) * 255) : 0;
-        const blue = 255 - Math.abs(clampedSlope / 10) * 255;
-        return `rgb(${red}, ${green}, ${blue})`; // Gradient from green to red
+        const clampedSlope = Math.min(Math.max(slope, 0), 5); // Clamp between 0% and 5%
+        const red = Math.floor((clampedSlope / 5) * 255); // Slope of 5% is full red
+        const green = Math.floor((1 - clampedSlope / 5) * 255); // Slope of 0% is full green
+        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (5%)
     };
 
     const fetchBicyclePaths = async () => {
@@ -150,17 +163,25 @@ const BicycleMap: React.FC = () => {
             element.geometry.map((point: { lat: number; lon: number }) => [point.lon, point.lat]) // Convert to [lon, lat] for Turf.js
         );
 
+        // Step 1: Display all paths as thin dark grey lines
+        segments.forEach((path) => {
+            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]);
+            L.polyline(flippedPath, { color: 'darkgrey', weight: 1 }).addTo(map);
+        });
+
+        // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
             await displayPathsWithSlopes(map, path, 100); // 100m sampling interval
         });
     };
 
     useEffect(() => {
-        const initializedMap = L.map('map').setView([52.52, 13.405], 12);
+        const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png', {
             maxZoom: 19,
-            attribution: '© OpenStreetMap contributors',
+            opacity: 0.8,
+            attribution: '© OpenStreetMap contributors, Tiles: © Stadia Maps',
         }).addTo(initializedMap);
 
         setMap(initializedMap);
