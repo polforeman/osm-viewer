@@ -171,7 +171,7 @@ const BicycleMap: React.FC = () => {
     
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, 200); // 100m sampling interval
+            await displayPathsWithSlopes(map, path, 150); // 100m sampling interval
         });
     };
     
