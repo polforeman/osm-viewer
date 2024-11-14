@@ -93,7 +93,7 @@ const BicycleMap: React.FC = () => {
             const polyline = L.polyline(slicedCoords, { color, weight: 5 }).addTo(map);
 
             polyline.bindTooltip(
-                `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
+                `Slope: ${slope.toFixed(0)}%, Start: ${startElevation.toFixed(0)}m, End: ${endElevation.toFixed(0)}m`,
                 { sticky: true }
             );
         }
