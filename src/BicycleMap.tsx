@@ -6,6 +6,9 @@ import * as GeoTIFF from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
+    const [showPaths, setShowPaths] = useState(true); // Default to showing bike paths
+    const [showSlopes, setShowSlopes] = useState(true); // Default to showing slopes
+    const [isCalculating, setIsCalculating] = useState(false); // Track slope calculations
 
     const MIN_PATH_LENGTH = 10; // Minimum path length in meters to display
     const MAX_SAMPLING_DISTANCE = 150; // Maximum sampling distance in meters
@@ -95,9 +98,9 @@ const BicycleMap: React.FC = () => {
         return points;
     };
 
-    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<{ slopes: (number | null)[]; elevations: number[] }> => {
+    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<{ slopes: number[]; elevations: number[] }> => {
         const elevations = await Promise.all(samplingPoints.map(([lon, lat]) => getElevation(lon, lat)));
-        const slopes: (number | null)[] = [];
+        const slopes: number[] = [];
 
         for (let i = 0; i < elevations.length - 1; i++) {
             const elevation1 = elevations[i];
@@ -114,10 +117,10 @@ const BicycleMap: React.FC = () => {
                     const slope = ((elevation2 - elevation1) / distance) * 100;
                     slopes.push(slope);
                 } else {
-                    slopes.push(null); // Skip slope for zero distance
+                    slopes.push(0);
                 }
             } else {
-                slopes.push(null); // Skip slope if elevation data is missing
+                slopes.push(0); // Default slope if elevation data is missing
             }
         }
 
@@ -132,14 +135,12 @@ const BicycleMap: React.FC = () => {
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
     
         for (let i = 0; i < samplingPoints.length - 1; i++) {
-            if (slopes[i] === null) continue; // Skip if no slope value available
-
             const startPoint = turf.point(samplingPoints[i]);
             const endPoint = turf.point(samplingPoints[i + 1]);
             const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
     
             const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
-            const slope = Math.abs(slopes[i]!); // Take absolute value for coloring
+            const slope = Math.abs(slopes[i]); // Take absolute value for coloring
             const startElevation = elevations[i];
             const endElevation = elevations[i + 1];
     
@@ -161,9 +162,9 @@ const BicycleMap: React.FC = () => {
         return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (MAX_SLOPE%)
     };
 
-    const fetchBicyclePaths = async () => {
-        if (!map) return;
-    
+    const fetchAndDisplayPaths = async () => {
+        if (!map || !showPaths) return;
+
         const bounds = map.getBounds();
         const southWest = bounds.getSouthWest();
         const northEast = bounds.getNorthEast();
@@ -185,11 +186,19 @@ const BicycleMap: React.FC = () => {
             const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
             L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map); // Increase line width
         });
-    
-        // Step 2: Display slope-colored paths
-        segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, MAX_SAMPLING_DISTANCE); // Sampling distance now dynamic
-        });
+
+        if (showSlopes) {
+            setIsCalculating(true); // Start slope calculation
+            try {
+                await Promise.all(
+                    segments.map(async (path) => {
+                        await displayPathsWithSlopes(map, path, MAX_SAMPLING_DISTANCE);
+                    })
+                );
+            } finally {
+                setIsCalculating(false); // Done calculating slopes
+            }
+        }
     };
 
     useEffect(() => {
@@ -211,14 +220,39 @@ const BicycleMap: React.FC = () => {
     useEffect(() => {
         if (!map) return;
 
-        map.on('moveend', fetchBicyclePaths);
+        map.on('moveend', fetchAndDisplayPaths);
+        fetchAndDisplayPaths(); // Trigger once on load
 
         return () => {
-            map.off('moveend', fetchBicyclePaths);
+            map.off('moveend', fetchAndDisplayPaths);
         };
-    }, [map]);
+    }, [map, showPaths, showSlopes]);
 
-    return <div id="map" style={{ height: '80vh', width: '80vw', margin: '0 auto' }} />;
+    return (
+        <div style={{ position: 'relative', height: '100vh', width: '100%' }}>
+            {isCalculating && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        color: 'white',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        zIndex: 1000,
+                        fontSize: '1.5em',
+                    }}
+                >
+                    Calculating slopes...
+                </div>
+            )}
+            <div id="map" style={{ width: '100%', height: '100%' }} />
+        </div>
+    );
 };
 
 export default BicycleMap;
