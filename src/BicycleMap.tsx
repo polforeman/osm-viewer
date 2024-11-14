@@ -1,80 +1,109 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
+import 'leaflet-control-geocoder';
 import * as turf from '@turf/turf';
 import * as GeoTIFF from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
-    const [isCalculating, setIsCalculating] = useState(false); // Keep state updater for slope calculation status
-    const showPaths = true; // Always show paths
-    const showSlopes = true; // Always show slopes
+    const [isCalculating, setIsCalculating] = useState(false);
+    const showPaths = true;
+    const showSlopes = true;
 
-    const MIN_PATH_LENGTH = 10; // Minimum path length in meters to display
-    const MAX_SAMPLING_DISTANCE = 150; // Maximum sampling distance in meters
-    const MAX_SLOPE = 10; // Maximum slope (%) to display in red
+    const MIN_PATH_LENGTH = 10;
+    const MAX_SAMPLING_DISTANCE = 150;
+    const MAX_SLOPE = 10;
 
-    // Cache for GeoTIFF tiles
-    const tileCache = new Map<string, GeoTIFF.GeoTIFF>();
+    const initializeGeocoder = (mapInstance: L.Map) => {
+        // @ts-ignore: Leaflet Control Geocoder plugin doesn't have type definitions
+        const geocoder = L.Control.geocoder({
+            query: '',
+            placeholder: 'Search for a city...',
+            defaultMarkGeocode: false,
+        }).addTo(mapInstance);
 
-    const fetchGeoTIFF = async (z: number, x: number, y: number): Promise<GeoTIFF.GeoTIFF | null> => {
-        const tileKey = `${z}/${x}/${y}`;
-        if (tileCache.has(tileKey)) {
-            return tileCache.get(tileKey) || null;
-        }
+        geocoder.on('markgeocode', function (e: any) {
+            const bbox = e.geocode.bbox;
+            const bounds = L.latLngBounds(
+                L.latLng(bbox.getSouthWest()),
+                L.latLng(bbox.getNorthEast())
+            );
+            mapInstance.fitBounds(bounds);
+        });
+    };
 
-        const url = `https://s3.amazonaws.com/elevation-tiles-prod/geotiff/${z}/${x}/${y}.tif`;
+    const fetchAndDisplayPaths = async () => {
+        if (!map || !showPaths) return;
 
-        try {
-            const response = await fetch(url);
-            if (response.ok) {
-                const arrayBuffer = await response.arrayBuffer();
-                const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
-                tileCache.set(tileKey, tiff);
-                return tiff;
-            } else {
-                console.error(`GeoTIFF fetch failed for ${url}: ${response.statusText}`);
-                return null;
+        const bounds = map.getBounds();
+        const southWest = bounds.getSouthWest();
+        const northEast = bounds.getNorthEast();
+
+        const query = `
+            [out:json];
+            way["highway"="cycleway"](${southWest.lat},${southWest.lng},${northEast.lat},${northEast.lng});
+            out geom;
+        `;
+        const response = await fetch(`https://overpass-api.de/api/interpreter?data=${query}`);
+        const data: { elements: { geometry: { lat: number; lon: number }[] }[] } = await response.json();
+
+        const segments: Array<Array<[number, number]>> = data.elements.map((element) =>
+            element.geometry.map((point) => [point.lon, point.lat])
+        );
+
+        segments.forEach((path) => {
+            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]);
+            L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map);
+        });
+
+        if (showSlopes) {
+            setIsCalculating(true);
+            try {
+                await Promise.all(
+                    segments.map(async (path) => {
+                        await displayPathsWithSlopes(map, path, MAX_SAMPLING_DISTANCE);
+                    })
+                );
+            } finally {
+                setIsCalculating(false);
             }
-        } catch (error) {
-            console.error(`GeoTIFF fetch error for URL: ${url}`, error);
-            return null;
         }
     };
 
-    const latLonToMercator = (lat: number, lon: number): [number, number] => {
-        const radius = 6378137;
-        const x = radius * (lon * Math.PI) / 180;
-        const y = radius * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-        return [x, y];
+    const displayPathsWithSlopes = async (map: L.Map, path: Array<[number, number]>, interval: number) => {
+        const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
+        if (totalLength < MIN_PATH_LENGTH) return;
+
+        const samplingPoints = generateSamplingPoints(path, interval);
+        const { slopes, elevations } = await calculateSlopes(samplingPoints);
+
+        for (let i = 0; i < samplingPoints.length - 1; i++) {
+            const startPoint = turf.point(samplingPoints[i]);
+            const endPoint = turf.point(samplingPoints[i + 1]);
+            const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
+
+            const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
+            const slope = Math.abs(slopes[i]);
+            const startElevation = elevations[i];
+            const endElevation = elevations[i + 1];
+
+            const color = getSlopeColor(slope);
+            const polyline = L.polyline(slicedCoords, { color, weight: 5 }).addTo(map);
+
+            polyline.bindTooltip(
+                `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
+                { sticky: true }
+            );
+        }
     };
 
-    const getElevation = async (lon: number, lat: number): Promise<number | null> => {
-        const zoom = 12;
-        const x = Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
-        const y = Math.floor(((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2) * Math.pow(2, zoom));
-
-        const tiff = await fetchGeoTIFF(zoom, x, y);
-        if (!tiff) return null;
-
-        const image = await tiff.getImage();
-        const rasters = (await image.readRasters()) as GeoTIFF.TypedArray[];
-        const bbox = image.getBoundingBox();
-        const width = image.getWidth();
-        const height = image.getHeight();
-
-        const [mercatorX, mercatorY] = latLonToMercator(lat, lon);
-
-        const pixelX = Math.floor(((mercatorX - bbox[0]) / (bbox[2] - bbox[0])) * width);
-        const pixelY = Math.floor(((bbox[3] - mercatorY) / (bbox[3] - bbox[1])) * height);
-
-        if (pixelX >= 0 && pixelX < width && pixelY >= 0 && pixelY < height) {
-            const elevation = rasters[0][pixelY * width + pixelX];
-            return elevation;
-        } else {
-            console.error("Coordinates out of bounds for GeoTIFF");
-            return null;
-        }
+    const getSlopeColor = (slope: number): string => {
+        const clampedSlope = Math.min(Math.max(slope, 0), MAX_SLOPE);
+        const red = Math.floor((clampedSlope / MAX_SLOPE) * 255);
+        const green = Math.floor((1 - clampedSlope / MAX_SLOPE) * 255);
+        return `rgb(${red}, ${green}, 0)`;
     };
 
     const generateSamplingPoints = (path: [number, number][], interval: number): [number, number][] => {
@@ -126,76 +155,65 @@ const BicycleMap: React.FC = () => {
         return { slopes, elevations: elevations.map((e) => e ?? 0) };
     };
 
-    const displayPathsWithSlopes = async (map: L.Map, path: Array<[number, number]>, interval: number) => {
-        const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
-        if (totalLength < MIN_PATH_LENGTH) return;
+    const getElevation = async (lon: number, lat: number): Promise<number | null> => {
+        const zoom = 12;
+        const x = Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
+        const y = Math.floor(((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2) * Math.pow(2, zoom));
 
-        const samplingPoints = generateSamplingPoints(path, interval);
-        const { slopes, elevations } = await calculateSlopes(samplingPoints);
+        const tiff = await fetchGeoTIFF(zoom, x, y);
+        if (!tiff) return null;
 
-        for (let i = 0; i < samplingPoints.length - 1; i++) {
-            const startPoint = turf.point(samplingPoints[i]);
-            const endPoint = turf.point(samplingPoints[i + 1]);
-            const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
+        const image = await tiff.getImage();
+        const rasters = (await image.readRasters()) as GeoTIFF.TypedArray[];
+        const bbox = image.getBoundingBox();
+        const width = image.getWidth();
+        const height = image.getHeight();
 
-            const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
-            const slope = Math.abs(slopes[i]);
-            const startElevation = elevations[i];
-            const endElevation = elevations[i + 1];
+        const [mercatorX, mercatorY] = latLonToMercator(lat, lon);
 
-            const color = getSlopeColor(slope);
-            const polyline = L.polyline(slicedCoords, { color, weight: 5 }).addTo(map);
+        const pixelX = Math.floor(((mercatorX - bbox[0]) / (bbox[2] - bbox[0])) * width);
+        const pixelY = Math.floor(((bbox[3] - mercatorY) / (bbox[3] - bbox[1])) * height);
 
-            polyline.bindTooltip(
-                `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
-                { sticky: true }
-            );
+        if (pixelX >= 0 && pixelX < width && pixelY >= 0 && pixelY < height) {
+            const elevation = rasters[0][pixelY * width + pixelX];
+            return elevation;
+        } else {
+            console.error("Coordinates out of bounds for GeoTIFF");
+            return null;
         }
     };
 
-    const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), MAX_SLOPE);
-        const red = Math.floor((clampedSlope / MAX_SLOPE) * 255);
-        const green = Math.floor((1 - clampedSlope / MAX_SLOPE) * 255);
-        return `rgb(${red}, ${green}, 0)`;
-    };
+    const fetchGeoTIFF = async (z: number, x: number, y: number): Promise<GeoTIFF.GeoTIFF | null> => {
+        const tileCache = new Map<string, GeoTIFF.GeoTIFF>();
+        const tileKey = `${z}/${x}/${y}`;
+        if (tileCache.has(tileKey)) {
+            return tileCache.get(tileKey) || null;
+        }
 
-    const fetchAndDisplayPaths = async () => {
-        if (!map || !showPaths) return;
+        const url = `https://s3.amazonaws.com/elevation-tiles-prod/geotiff/${z}/${x}/${y}.tif`;
 
-        const bounds = map.getBounds();
-        const southWest = bounds.getSouthWest();
-        const northEast = bounds.getNorthEast();
-
-        const query = `
-            [out:json];
-            way["highway"="cycleway"](${southWest.lat},${southWest.lng},${northEast.lat},${northEast.lng});
-            out geom;
-        `;
-        const response = await fetch(`https://overpass-api.de/api/interpreter?data=${query}`);
-        const data: { elements: { geometry: { lat: number; lon: number }[] }[] } = await response.json();
-
-        const segments: Array<Array<[number, number]>> = data.elements.map((element) =>
-            element.geometry.map((point) => [point.lon, point.lat])
-        );
-
-        segments.forEach((path) => {
-            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]);
-            L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map);
-        });
-
-        if (showSlopes) {
-            setIsCalculating(true);
-            try {
-                await Promise.all(
-                    segments.map(async (path) => {
-                        await displayPathsWithSlopes(map, path, MAX_SAMPLING_DISTANCE);
-                    })
-                );
-            } finally {
-                setIsCalculating(false);
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                const arrayBuffer = await response.arrayBuffer();
+                const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+                tileCache.set(tileKey, tiff);
+                return tiff;
+            } else {
+                console.error(`GeoTIFF fetch failed for ${url}: ${response.statusText}`);
+                return null;
             }
+        } catch (error) {
+            console.error(`GeoTIFF fetch error for URL: ${url}`, error);
+            return null;
         }
+    };
+
+    const latLonToMercator = (lat: number, lon: number): [number, number] => {
+        const radius = 6378137;
+        const x = radius * (lon * Math.PI) / 180;
+        const y = radius * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+        return [x, y];
     };
 
     useEffect(() => {
@@ -207,6 +225,7 @@ const BicycleMap: React.FC = () => {
             attribution: '© OpenStreetMap contributors',
         }).addTo(initializedMap);
 
+        initializeGeocoder(initializedMap);
         setMap(initializedMap);
 
         return () => {
