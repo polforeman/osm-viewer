@@ -8,6 +8,8 @@ const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
 
     const MIN_PATH_LENGTH = 10; // Minimum path length in meters to display
+    const MAX_SAMPLING_DISTANCE = 150; // Maximum sampling distance in meters
+    const MAX_SLOPE = 10; // Maximum slope (%) to display in red
 
     // Cache for GeoTIFF tiles
     const tileCache = new Map<string, GeoTIFF.GeoTIFF>();
@@ -93,9 +95,9 @@ const BicycleMap: React.FC = () => {
         return points;
     };
 
-    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<{ slopes: number[]; elevations: number[] }> => {
+    const calculateSlopes = async (samplingPoints: [number, number][]): Promise<{ slopes: (number | null)[]; elevations: number[] }> => {
         const elevations = await Promise.all(samplingPoints.map(([lon, lat]) => getElevation(lon, lat)));
-        const slopes: number[] = [];
+        const slopes: (number | null)[] = [];
 
         for (let i = 0; i < elevations.length - 1; i++) {
             const elevation1 = elevations[i];
@@ -112,10 +114,10 @@ const BicycleMap: React.FC = () => {
                     const slope = ((elevation2 - elevation1) / distance) * 100;
                     slopes.push(slope);
                 } else {
-                    slopes.push(0);
+                    slopes.push(null); // Skip slope for zero distance
                 }
             } else {
-                slopes.push(0); // Default slope if elevation data is missing
+                slopes.push(null); // Skip slope if elevation data is missing
             }
         }
 
@@ -130,17 +132,19 @@ const BicycleMap: React.FC = () => {
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
     
         for (let i = 0; i < samplingPoints.length - 1; i++) {
+            if (slopes[i] === null) continue; // Skip if no slope value available
+
             const startPoint = turf.point(samplingPoints[i]);
             const endPoint = turf.point(samplingPoints[i + 1]);
             const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
     
             const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
-            const slope = Math.abs(slopes[i]); // Take absolute value for coloring
+            const slope = Math.abs(slopes[i]!); // Take absolute value for coloring
             const startElevation = elevations[i];
             const endElevation = elevations[i + 1];
     
             const color = getSlopeColor(slope);
-            const polyline = L.polyline(slicedCoords, { color, weight: 3 }).addTo(map);
+            const polyline = L.polyline(slicedCoords, { color, weight: 5 }).addTo(map);
     
             // Add tooltip with slope and elevation details
             polyline.bindTooltip(
@@ -151,10 +155,10 @@ const BicycleMap: React.FC = () => {
     };
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), 10); // Clamp between 0% and 5%
-        const red = Math.floor((clampedSlope / 10) * 255); // Slope of 5% is full red
-        const green = Math.floor((1 - clampedSlope / 10) * 255); // Slope of 0% is full green
-        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (5%)
+        const clampedSlope = Math.min(Math.max(slope, 0), MAX_SLOPE); // Clamp between 0% and MAX_SLOPE
+        const red = Math.floor((clampedSlope / MAX_SLOPE) * 255); // Slope of MAX_SLOPE is full red
+        const green = Math.floor((1 - clampedSlope / MAX_SLOPE) * 255); // Slope of 0% is full green
+        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (MAX_SLOPE%)
     };
 
     const fetchBicyclePaths = async () => {
@@ -176,18 +180,17 @@ const BicycleMap: React.FC = () => {
             element.geometry.map((point) => [point.lon, point.lat])
         );
     
-        // Step 1: Display all paths as thin grey lines
+        // Step 1: Display all paths as thicker dark grey lines
         segments.forEach((path) => {
             const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
-            L.polyline(flippedPath, { color: 'darkgrey', weight: 1 }).addTo(map);
+            L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map); // Increase line width
         });
     
         // Step 2: Display slope-colored paths
         segments.forEach(async (path: Array<[number, number]>) => {
-            await displayPathsWithSlopes(map, path, 150); // 150m sampling interval
+            await displayPathsWithSlopes(map, path, MAX_SAMPLING_DISTANCE); // Sampling distance now dynamic
         });
     };
-    
 
     useEffect(() => {
         const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
