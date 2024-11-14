@@ -6,9 +6,9 @@ import * as GeoTIFF from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
-    const [showPaths, setShowPaths] = useState(true); // Default to showing bike paths
-    const [showSlopes, setShowSlopes] = useState(true); // Default to showing slopes
-    const [isCalculating, setIsCalculating] = useState(false); // Track slope calculations
+    const [isCalculating, setIsCalculating] = useState(false); // Keep state updater for slope calculation status
+    const showPaths = true; // Always show paths
+    const showSlopes = true; // Always show slopes
 
     const MIN_PATH_LENGTH = 10; // Minimum path length in meters to display
     const MAX_SAMPLING_DISTANCE = 150; // Maximum sampling distance in meters
@@ -79,17 +79,16 @@ const BicycleMap: React.FC = () => {
 
     const generateSamplingPoints = (path: [number, number][], interval: number): [number, number][] => {
         const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
-        const numPoints = Math.ceil(totalLength / interval); // Determine the number of points
-        const actualInterval = totalLength / numPoints; // Recalculate interval to ensure start/end inclusion
+        const numPoints = Math.ceil(totalLength / interval);
+        const actualInterval = totalLength / numPoints;
         const points: [number, number][] = [];
 
         for (let dist = 0; dist <= totalLength; dist += actualInterval) {
             const point = turf.along(turf.lineString(path), dist, { units: 'meters' });
             const [lon, lat] = point.geometry.coordinates;
-            points.push([lon, lat]); // Keep lon/lat for Turf.js
+            points.push([lon, lat]);
         }
 
-        // Ensure the end point is included
         const end = path[path.length - 1];
         if (points[points.length - 1][0] !== end[0] || points[points.length - 1][1] !== end[1]) {
             points.push(end);
@@ -120,7 +119,7 @@ const BicycleMap: React.FC = () => {
                     slopes.push(0);
                 }
             } else {
-                slopes.push(0); // Default slope if elevation data is missing
+                slopes.push(0);
             }
         }
 
@@ -129,25 +128,24 @@ const BicycleMap: React.FC = () => {
 
     const displayPathsWithSlopes = async (map: L.Map, path: Array<[number, number]>, interval: number) => {
         const totalLength = turf.length(turf.lineString(path), { units: 'meters' });
-        if (totalLength < MIN_PATH_LENGTH) return; // Skip short paths
+        if (totalLength < MIN_PATH_LENGTH) return;
 
         const samplingPoints = generateSamplingPoints(path, interval);
         const { slopes, elevations } = await calculateSlopes(samplingPoints);
-    
+
         for (let i = 0; i < samplingPoints.length - 1; i++) {
             const startPoint = turf.point(samplingPoints[i]);
             const endPoint = turf.point(samplingPoints[i + 1]);
             const slicedSegment = turf.lineSlice(startPoint, endPoint, turf.lineString(path));
-    
+
             const slicedCoords = slicedSegment.geometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
-            const slope = Math.abs(slopes[i]); // Take absolute value for coloring
+            const slope = Math.abs(slopes[i]);
             const startElevation = elevations[i];
             const endElevation = elevations[i + 1];
-    
+
             const color = getSlopeColor(slope);
             const polyline = L.polyline(slicedCoords, { color, weight: 5 }).addTo(map);
-    
-            // Add tooltip with slope and elevation details
+
             polyline.bindTooltip(
                 `Slope: ${slope.toFixed(2)}%, Start: ${startElevation.toFixed(1)}m, End: ${endElevation.toFixed(1)}m`,
                 { sticky: true }
@@ -156,10 +154,10 @@ const BicycleMap: React.FC = () => {
     };
 
     const getSlopeColor = (slope: number): string => {
-        const clampedSlope = Math.min(Math.max(slope, 0), MAX_SLOPE); // Clamp between 0% and MAX_SLOPE
-        const red = Math.floor((clampedSlope / MAX_SLOPE) * 255); // Slope of MAX_SLOPE is full red
-        const green = Math.floor((1 - clampedSlope / MAX_SLOPE) * 255); // Slope of 0% is full green
-        return `rgb(${red}, ${green}, 0)`; // Gradient from green (0%) to red (MAX_SLOPE%)
+        const clampedSlope = Math.min(Math.max(slope, 0), MAX_SLOPE);
+        const red = Math.floor((clampedSlope / MAX_SLOPE) * 255);
+        const green = Math.floor((1 - clampedSlope / MAX_SLOPE) * 255);
+        return `rgb(${red}, ${green}, 0)`;
     };
 
     const fetchAndDisplayPaths = async () => {
@@ -168,7 +166,7 @@ const BicycleMap: React.FC = () => {
         const bounds = map.getBounds();
         const southWest = bounds.getSouthWest();
         const northEast = bounds.getNorthEast();
-    
+
         const query = `
             [out:json];
             way["highway"="cycleway"](${southWest.lat},${southWest.lng},${northEast.lat},${northEast.lng});
@@ -176,19 +174,18 @@ const BicycleMap: React.FC = () => {
         `;
         const response = await fetch(`https://overpass-api.de/api/interpreter?data=${query}`);
         const data: { elements: { geometry: { lat: number; lon: number }[] }[] } = await response.json();
-    
+
         const segments: Array<Array<[number, number]>> = data.elements.map((element) =>
             element.geometry.map((point) => [point.lon, point.lat])
         );
-    
-        // Step 1: Display all paths as thicker dark grey lines
+
         segments.forEach((path) => {
-            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]); // Flip for Leaflet
-            L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map); // Increase line width
+            const flippedPath = path.map(([lon, lat]) => [lat, lon] as [number, number]);
+            L.polyline(flippedPath, { color: 'darkgrey', weight: 3 }).addTo(map);
         });
 
         if (showSlopes) {
-            setIsCalculating(true); // Start slope calculation
+            setIsCalculating(true);
             try {
                 await Promise.all(
                     segments.map(async (path) => {
@@ -196,7 +193,7 @@ const BicycleMap: React.FC = () => {
                     })
                 );
             } finally {
-                setIsCalculating(false); // Done calculating slopes
+                setIsCalculating(false);
             }
         }
     };
@@ -221,36 +218,34 @@ const BicycleMap: React.FC = () => {
         if (!map) return;
 
         map.on('moveend', fetchAndDisplayPaths);
-        fetchAndDisplayPaths(); // Trigger once on load
+        fetchAndDisplayPaths();
 
         return () => {
             map.off('moveend', fetchAndDisplayPaths);
         };
-    }, [map, showPaths, showSlopes]);
+    }, [map]);
 
     return (
-        <div style={{ position: 'relative', height: '100vh', width: '100%' }}>
+        <div style={{ position: 'relative', textAlign: 'center' }}>
+            <div id="map" style={{ height: '80vh', width: '80vw', margin: '0 auto', display: 'inline-block' }} />
             {isCalculating && (
                 <div
                     style={{
                         position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
                         color: 'white',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)',
                         zIndex: 1000,
-                        fontSize: '1.5em',
                     }}
                 >
                     Calculating slopes...
                 </div>
             )}
-            <div id="map" style={{ width: '100%', height: '100%' }} />
         </div>
     );
 };

@@ -4,7 +4,7 @@ import BicycleMap from './BicycleMap';
 const App: React.FC = () => {
     return (
         <div className="App">
-            <h1>Bike path slope viewer</h1>
+            <h1>Bicycle path slope viewer</h1>
             <BicycleMap />
         </div>
     );
