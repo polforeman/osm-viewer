@@ -1,38 +1,22 @@
 import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet-control-geocoder/dist/Control.Geocoder.css';
-import 'leaflet-control-geocoder';
 import * as turf from '@turf/turf';
 import * as GeoTIFF from 'geotiff';
 
 const BicycleMap: React.FC = () => {
     const [map, setMap] = useState<L.Map | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
+    const [showMaxZoomMessage, setShowMaxZoomMessage] = useState(false);
     const showPaths = true;
     const showSlopes = true;
 
     const MIN_PATH_LENGTH = 10;
     const MAX_SAMPLING_DISTANCE = 150;
     const MAX_SLOPE = 10;
-
-    const initializeGeocoder = (mapInstance: L.Map) => {
-        // @ts-ignore: Leaflet Control Geocoder plugin doesn't have type definitions
-        const geocoder = L.Control.geocoder({
-            query: '',
-            placeholder: 'Search for a city...',
-            defaultMarkGeocode: false,
-        }).addTo(mapInstance);
-
-        geocoder.on('markgeocode', function (e: any) {
-            const bbox = e.geocode.bbox;
-            const bounds = L.latLngBounds(
-                L.latLng(bbox.getSouthWest()),
-                L.latLng(bbox.getNorthEast())
-            );
-            mapInstance.fitBounds(bounds);
-        });
-    };
+    const INITIAL_ZOOM_LEVEL = 16;
+    const MAX_ZOOM_OUT_LEVEL = 15; 
+    const MAX_ZOOM_IN_LEVEL = 18; 
 
     const fetchAndDisplayPaths = async () => {
         if (!map || !showPaths) return;
@@ -217,15 +201,24 @@ const BicycleMap: React.FC = () => {
     };
 
     useEffect(() => {
-        const initializedMap = L.map('map').setView([52.543171368317985, 13.402061112637254], 15);
+        const initializedMap = L.map('map', {
+            maxZoom: MAX_ZOOM_IN_LEVEL,
+            minZoom: MAX_ZOOM_OUT_LEVEL,
+        }).setView([52.543171368317985, 13.402061112637254], INITIAL_ZOOM_LEVEL);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
+            maxZoom: MAX_ZOOM_IN_LEVEL,
             opacity: 0.3,
             attribution: '© OpenStreetMap contributors',
         }).addTo(initializedMap);
 
-        initializeGeocoder(initializedMap);
+        initializedMap.on('zoomend', () => {
+            if (initializedMap.getZoom() === MAX_ZOOM_OUT_LEVEL) {
+                setShowMaxZoomMessage(true);
+                setTimeout(() => setShowMaxZoomMessage(false), 2000);
+            }
+        });
+
         setMap(initializedMap);
 
         return () => {
@@ -247,6 +240,24 @@ const BicycleMap: React.FC = () => {
     return (
         <div style={{ position: 'relative', textAlign: 'center' }}>
             <div id="map" style={{ height: '80vh', width: '80vw', margin: '0 auto', display: 'inline-block' }} />
+            {showMaxZoomMessage && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        bottom: '10%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        color: 'white',
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)',
+                        zIndex: 1000,
+                    }}
+                >
+                    Maximum zoom-out level reached
+                </div>
+            )}
             {isCalculating && (
                 <div
                     style={{
